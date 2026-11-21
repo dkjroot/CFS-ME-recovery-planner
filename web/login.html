@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Sign in · ME/CFS Recovery Planner</title>
+  <link rel="stylesheet" href="/planner.css">
+</head>
+<body class="login-page">
+  <main class="login-layout">
+    <header class="login-intro">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <h1>Recovery<br class="login-break"> Planner</h1>
+      <p>Keep track of your activity, rest and how you feel.</p>
+    </header>
+    <section class="card login-card" aria-labelledby="sign-in-title">
+      <h2 id="sign-in-title">Sign in</h2>
+      <!-- sign-in status -->
+      <form action="/login" method="post">
+        <label>Username
+          <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="32" required>
+        </label>
+        <label>Password
+          <input name="password" type="password" autocomplete="current-password" maxlength="256" required>
+        </label>
+        <label class="checkbox"><input name="remember" type="checkbox" value="yes"> Keep me signed in for 30 days</label>
+        <button>Sign in</button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>ME/CFS Recovery Planner</title>
+  <link rel="stylesheet" href="planner.css">
+  <script src="planner.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="/" aria-label="Recovery Planner home">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>Recovery Planner</span>
+      </a>
+      <nav id="navigation" aria-label="Planner" hidden>
+        <a href="#today">Today</a>
+        <a href="#roadmap">Roadmap</a>
+        <a id="activity-link" href="#trend-panel" hidden>Activity</a>
+        <a href="#plan" data-edit-plan>Plan settings</a>
+      </nav>
+      <div id="account-bar" class="account-bar" hidden>
+        <span id="account-name" class="account-name"></span>
+        <button id="sign-out" type="button" class="secondary">Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page">
+    <p id="connection" class="connection" role="status">Connecting to the planner…</p>
+    <noscript><p class="connection">Enable JavaScript and open the address shown by the planner launcher.</p></noscript>
+    <div id="dashboard" hidden>
+      <header class="page-heading" id="today">
+        <h1>Today</h1>
+        <p id="today-date" class="today-date"></p>
+      </header>
+      <p id="notice" class="notice" role="status"></p>
+
+      <section class="card guided-today" aria-labelledby="guide-title">
+        <div class="card-heading">
+          <div>
+            <p class="guide-label" id="guide-label">Current stage</p>
+            <h2 id="guide-title"></h2>
+          </div>
+          <div class="guide-links">
+            <a class="text-action" href="#roadmap" id="guide-date">See roadmap</a>
+            <a class="text-action" href="#log-panel">Log a check-in</a>
+          </div>
+        </div>
+        <p id="guide-focus" class="section-description"></p>
+        <p id="guide-items" class="section-description" hidden></p>
+        <div class="routine-grid">
+          <div>
+            <h3>Suggested for today</h3>
+            <div id="suggestions" class="suggestions"></div>
+          </div>
+          <div>
+            <h3>Your daily routine</h3>
+            <p id="routine-empty" class="section-description">Add a suggestion or an activity of your own.</p>
+            <div id="routine-items"></div>
+            <details class="add-routine">
+              <summary>Add your own activity</summary>
+              <form id="routine-form" class="field-grid">
+                <label class="wide">Activity <input name="name" maxlength="60" required></label>
+                <label>Type <select name="kind" required></select></label>
+                <label>Planned minutes <span class="optional">Optional</span>
+                  <input name="planned" type="number" min="0" max="1440" inputmode="numeric">
+                </label>
+                <button class="wide">Add to routine</button>
+              </form>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <div class="dashboard-grid">
+        <section id="today-panel" class="card today-card" hidden aria-labelledby="today-title">
+          <div class="card-heading">
+            <h2 id="today-title">Today’s plan</h2>
+            <a class="text-action" href="#plan" data-edit-plan>Edit plan</a>
+          </div>
+          <p class="limit" id="daily-limit"></p>
+          <p class="activity-name" id="activity-name"></p>
+          <p id="rest-note" class="rest-note" hidden></p>
+          <div class="plan-footer">
+            <p id="plan-note"></p>
+            <div class="plan-actions">
+              <a class="text-action" id="review-link" href="#review-panel" hidden>Review previous days</a>
+              <button id="mode" type="button" class="secondary" hidden></button>
+            </div>
+          </div>
+        </section>
+
+        <section id="log-panel" class="card check-in" hidden aria-labelledby="log-title">
+          <h2 id="log-title">Daily check-in</h2>
+          <form id="entry-form" class="field-grid">
+            <label>Date <input name="date" type="date" min="1900-01-01" required></label>
+            <label id="primary-minutes">Chart activity minutes <span class="optional">Optional</span>
+              <input name="minutes" type="number" inputmode="numeric" min="0" max="1440">
+            </label>
+            <label class="wide">How did you feel?
+              <select name="feeling" required>
+                <option value="">Choose how you felt</option>
+                <option value="better">Better than usual</option>
+                <option value="usual">About the same</option>
+                <option value="worse">Worse than usual</option>
+                <option value="crash">Crash</option>
+              </select>
+            </label>
+            <fieldset id="routine-check-in" class="wide" hidden>
+              <legend>Minutes for your routine <span class="optional">Optional</span></legend>
+              <div id="routine-fields" class="field-grid"></div>
+            </fieldset>
+            <label class="wide">Other activities or context <span class="optional">Optional</span>
+              <textarea name="context" rows="2" maxlength="300" placeholder="e.g. Shopping trip, visitors, poor sleep"></textarea>
+            </label>
+            <button class="wide">Save check-in</button>
+          </form>
+        </section>
+
+        <section id="trend-panel" class="card trend-card" hidden aria-labelledby="trend-title">
+          <h2 id="trend-title">Activity over time</h2>
+          <p id="projection" class="section-description"></p>
+          <canvas id="chart" role="img" aria-label="Activity history and seven-day projection in minutes. Values are also available in the activity log."></canvas>
+          <ul class="legend">
+            <li><span class="logged-key"></span> Logged activity</li>
+            <li><span class="plan-key"></span> Saved limit</li>
+            <li><span class="estimate-key"></span> Projection</li>
+            <li><span class="low-key"></span> Low or crash</li>
+          </ul>
+        </section>
+      </div>
+
+      <section id="roadmap" class="card roadmap-card" aria-labelledby="roadmap-title">
+        <h2 id="roadmap-title">Your pacing roadmap</h2>
+        <p class="section-description">Review dates assume one usual or better check-in a day from here. A low or crash starts a fresh review window. You decide at each review whether to stay, step back, or change your plan.</p>
+        <ol id="stage-list" class="stage-list"></ol>
+        <p id="review-progress" class="section-description"></p>
+        <div class="stage-actions">
+          <button id="stage-next" type="button" hidden></button>
+          <button id="stage-back" type="button" class="secondary" hidden>Return to previous stage</button>
+        </div>
+        <details class="add-routine">
+          <summary>Review timing</summary>
+          <form id="review-form">
+            <label>Usual or better check-ins between reviews
+              <input type="number" name="interval" min="2" max="30" required inputmode="numeric">
+            </label>
+            <button class="secondary">Save review timing</button>
+          </form>
+        </details>
+      </section>
+
+      <section id="review-panel" class="card records-card" hidden aria-labelledby="review-title">
+        <h2 id="review-title">Before a low or crash</h2>
+        <p class="section-description">See what you logged in the three days beforehand. Timing alone can’t show what caused a low or crash.</p>
+        <div id="reviews"></div>
+      </section>
+
+      <section id="history-panel" class="card records-card" hidden aria-labelledby="history-title">
+        <h2 id="history-title">Activity log</h2>
+        <div id="history"></div>
+      </section>
+
+      <details id="plan" class="card settings-card">
+        <summary><span id="plan-title">Activity to chart</span><span aria-hidden="true" class="disclosure"></span></summary>
+        <form id="plan-form" class="field-grid">
+          <label class="wide">Activity <input name="activity" required maxlength="60" placeholder="e.g. Walking or reading"></label>
+          <label>Usual limit in minutes <input name="limit" type="number" inputmode="numeric" min="0" max="1440" required></label>
+          <label>Step-back limit in minutes <span class="optional">Optional</span>
+            <input name="step_back" type="number" inputmode="numeric" min="0" max="1440" aria-describedby="step-help">
+          </label>
+          <p id="step-help" class="help wide">Choose a lower limit you can switch to. Zero means pause this activity.</p>
+          <label class="wide">Rest and other plans <span class="optional">Optional</span>
+            <textarea name="rest" rows="2" maxlength="300" placeholder="e.g. Keep the afternoon clear"></textarea>
+          </label>
+          <button class="wide">Save plan</button>
+        </form>
+      </details>
+    </div>
+  </main>
+</body>
+</html>

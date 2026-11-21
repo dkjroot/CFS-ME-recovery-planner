@@ -1,3 +1,13 @@
+# Local project notes, reference material, and private data
+/AGENTS.md
+/DEVELOPMENT.md
+/agent_docs/
+/local_data/
+
+# Local credentials
+/.env.*
+!/.env.example
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
