@@ -462,6 +462,35 @@ class PlannerTests(unittest.TestCase):
         finally:
             self.server.https_origin = None
 
+    def test_https_proxy_with_allow_local_serves_both_origins_and_sets_appropriate_cookies(self):
+        origin = 'https://planner.example.net'
+        self.server.https_origin = origin
+        self.server.allow_local = True
+        try:
+            self.assertEqual(self.request('GET', '/login', headers={'Host': 'elsewhere.test'})[0], 403)
+
+            # Tailscale HTTPS host gets __Host- secure cookie
+            status, response, _ = self.sign_in(remember=True, Host='planner.example.net', Origin=origin)
+            self.assertEqual(status, 303)
+            self.assertTrue(response['Set-Cookie'].startswith('__Host-planner_session='))
+            self.assertIn('Secure', response['Set-Cookie'])
+
+            # Localhost and 127.0.0.1 loopback get non-Secure port-scoped cookie
+            port = self.server.server_port
+            for host in (f'localhost:{port}', f'127.0.0.1:{port}'):
+                local_origin = f'http://{host}'
+                status, response, _ = self.sign_in(remember=True, Host=host, Origin=local_origin)
+                self.assertEqual(status, 303)
+                self.assertTrue(response['Set-Cookie'].startswith(f'planner_session_{port}='))
+                self.assertNotIn('Secure', response['Set-Cookie'])
+
+            # Cross-origin POST (HTTPS Host with local Origin) is still rejected
+            status, _, _ = self.sign_in(Host='planner.example.net', Origin=f'http://localhost:{port}')
+            self.assertEqual(status, 403)
+        finally:
+            self.server.https_origin = None
+            self.server.allow_local = False
+
 
 if __name__ == '__main__':
     unittest.main()

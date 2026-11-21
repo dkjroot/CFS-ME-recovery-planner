@@ -43,9 +43,31 @@ class PlannerServer(ThreadingHTTPServer):
 class PlannerHandler(BaseHTTPRequestHandler):
     timeout = 10
 
+    def allowed_origins(self):
+        origins = []
+        https_origin = getattr(self.server, 'https_origin', None)
+        if https_origin:
+            origins.append(https_origin)
+        if not https_origin or getattr(self.server, 'allow_local', False):
+            origins.append(f'http://{HOST}:{self.server.server_port}')
+            origins.append(f'http://localhost:{self.server.server_port}')
+        return origins
+
+    def matched_origin(self):
+        hosts = self.headers.get_all('Host', [])
+        if len(hosts) != 1:
+            return None
+        host = hosts[0].lower()
+        for candidate in self.allowed_origins():
+            if host == urlsplit(candidate).netloc:
+                return candidate
+        return None
+
     @property
     def origin(self):
-        return getattr(self.server, 'https_origin', None) or f'http://{HOST}:{self.server.server_port}'
+        return (self.matched_origin()
+                or getattr(self.server, 'https_origin', None)
+                or f'http://{HOST}:{self.server.server_port}')
 
     @property
     def cookie_name(self):
@@ -81,8 +103,7 @@ class PlannerHandler(BaseHTTPRequestHandler):
         self.send_resource(include_body=False)
 
     def allowed_host(self):
-        hosts = self.headers.get_all('Host', [])
-        return len(hosts) == 1 and hosts[0].lower() == urlsplit(self.origin).netloc
+        return self.matched_origin() is not None
 
     def send_resource(self, *, include_body):
         if not self.allowed_host():
@@ -119,7 +140,8 @@ class PlannerHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_POST(self):
-        if not self.allowed_host() or self.headers.get_all('Origin') != [self.origin]:
+        origin = self.matched_origin()
+        if not origin or self.headers.get_all('Origin') != [origin]:
             self.send_json({'error': 'Open the planner at its local address.'}, HTTPStatus.FORBIDDEN)
             return
         if self.path in {'/login', '/logout'}:
@@ -292,6 +314,8 @@ def main():
     parser.add_argument('--port', type=int, default=DEFAULT_PORT, help='local port (default: %(default)s)')
     parser.add_argument('--https-origin', type=validate_https_origin,
                         help='browser-facing HTTPS origin for a local reverse proxy')
+    parser.add_argument('--allow-local', action='store_true',
+                        help='also allow local loopback access when --https-origin is set')
     account = parser.add_mutually_exclusive_group()
     account.add_argument('--add-user', metavar='USERNAME', help='create a user and prompt for a passphrase')
     account.add_argument('--reset-password', metavar='USERNAME', help='replace a local user’s passphrase')
@@ -309,7 +333,12 @@ def main():
         with PlannerServer((HOST, args.port), PlannerHandler) as server:
             server.accounts = accounts
             server.https_origin = args.https_origin
-            address = args.https_origin or f'http://{HOST}:{args.port}'
+            server.allow_local = args.allow_local
+            local_address = f'http://{HOST}:{args.port}'
+            if args.https_origin and args.allow_local:
+                address = f'{args.https_origin} and {local_address}'
+            else:
+                address = args.https_origin or local_address
             print(f'ME/CFS Recovery Planner is running at {address}', flush=True)
             server.serve_forever()
     except KeyboardInterrupt:

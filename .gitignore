@@ -4,6 +4,9 @@
 /DEVELOPMENT.md
 /agent_docs/
 /local_data/
+/run_local.ps1
+/run_local.sh
+/run_local.command
 
 # Local credentials
 /.env.*
