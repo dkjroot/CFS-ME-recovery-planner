@@ -103,32 +103,32 @@ sign-in cookies.
 
 ## Using the planner
 
-Start with the suggestions for today. Add quiet rest, everyday tasks or
-anything else that fits your day to your routine. You can give each item
-its own planned minutes and log what you actually did. If you want a
-graph for one activity, choose it under **Plan settings** and set its
-usual and step-back limits.
+When you first sign in, answer five quick questions about your current
+capacity (for example, how you tolerate household tasks, mental focus, and
+a 10-minute flat walk). The planner places you conservatively along a
+three-phase, twelve-level roadmap—from **Restore & Stabilize** (Levels 1–4),
+through **Rebuild & Strengthen** (Levels 5–8), to **Re-integrate into Life**
+(Levels 9–12)—and projects dates forward toward normal energy.
 
-The roadmap starts with making days steadier, then reviewing one change
-and making room for things you want to return to. It shows the earliest
-dates to review those stages. The default review window is seven usual
-or better check-ins. You can change that under **Review timing**. A low
-or crash starts the count again and brings the step-back suggestions
-forward for at least two later check-ins. After a day above plan, the planner waits for the next few days
-of check-ins before offering a stage change.
+Each day in **Today**, your routine is already filled in for your current
+level (rest, everyday home tasks, walking, gentle movement/stretching,
+reading or mental focus, and social time). Use the quick radio buttons to
+mark how each felt (`Skipped`, `Too much`, `Just right`, or `Could do more`)
+along with how you felt overall, any extra energy drainers, and any
+unplanned activities beyond the plan.
 
-The dates are for reviewing your plans. You decide when to change them.
-The roadmap draws on energy management principles such as planning rest,
-taking account of different kinds of activity and adjusting to changes
-in symptoms. [NICE guidance on energy management](https://www.nice.org.uk/guidance/ng206/chapter/Recommendations#energy-management)
-
-The graph shows your logged minutes and the plan you’ve saved. Once
-there are enough check-ins, it also shows what the next week would look
-like at your typical recent level. After a low or crash, you can review
-the three days beforehand, including any extra routine items you logged.
-The activity log also shows what was recorded in the three days after
-an activity. If you switch to your lower limit, it
-stays there until you choose to return to your usual plan.
+- **Stepping up:** Once you complete the steady hold window for a level (and
+  any 3-day follow-up window after an unplanned exertion clears), the planner
+  asks whether you are ready to move to the next level or hold for five more
+  days and recalculate dates.
+- **Crashes & stabilization:** Logging a crash (or two consecutive worse days)
+  automatically switches to a stripped-back stabilization routine. After two
+  consecutive steady days, the planner suggests a safe return level—factoring
+  in whether an unplanned stressor preceded the dip and any recent setbacks—and
+  adjusts future stage dates on the **Journey** trajectory graph.
+- **Your choices:** Under **Plan**, you can toggle optional activities on or
+  off, change your hold-window pace, jump to any level, or retake the starting
+  assessment.
 
 Plans and check-ins are saved as separate JSON files on the computer
 running the planner. The `local_data` folder also contains a small SQLite

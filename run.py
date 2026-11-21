@@ -133,7 +133,7 @@ class PlannerHandler(BaseHTTPRequestHandler):
                 self.login_page('Could not open the local accounts. Try again.', HTTPStatus.INTERNAL_SERVER_ERROR)
             return
         action = self.path.removeprefix('/api/planner/')
-        if action not in {'plan', 'entry', 'mode', 'roadmap', 'routine'} or self.path != f'/api/planner/{action}':
+        if action not in {'assessment', 'checkin', 'decision', 'preferences'} or self.path != f'/api/planner/{action}':
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         try:
@@ -174,7 +174,7 @@ class PlannerHandler(BaseHTTPRequestHandler):
         if len(lengths) != 1 or self.headers.get('Transfer-Encoding'):
             raise ValueError
         length = int(lengths[0])
-        if not 0 < length <= 8192:
+        if not 0 < length <= 16384:
             raise ValueError
         body = self.rfile.read(length)
         if len(body) != length:

@@ -14,7 +14,8 @@ from unittest.mock import patch
 from urllib.parse import urlencode
 
 from accounts import Accounts, LoginBusy, MAX_ATTEMPTS, REMEMBER_SECONDS
-from planner import PlannerStore, activity_view
+from guidance import evaluate_assessment, level_activities
+from planner import PlannerStore, blank_state
 from run import HOST, PlannerHandler, PlannerServer, main, manage_account
 
 
@@ -67,7 +68,7 @@ class AccountTests(unittest.TestCase):
 
     def test_legacy_import_is_explicit_and_does_not_overwrite(self):
         source = self.accounts.directory / 'planner.json'
-        source.write_text('{"plan": null, "activities": {}}', encoding='utf-8')
+        source.write_text('{"version": 2, "profile": null}', encoding='utf-8')
         args = Namespace(import_planner='Sample')
         with patch('run.DATA_FILE', source), patch('builtins.print'):
             manage_account(self.accounts, args)
@@ -89,153 +90,190 @@ class AccountTests(unittest.TestCase):
         self.assertIsNotNone(self.accounts.login('Mama', self.password, False))
 
 
-class ProjectionTests(unittest.TestCase):
+class AssessmentTests(unittest.TestCase):
+    def test_bedbound_or_walk_crash_starts_conservatively_in_phase_one(self):
+        severe = evaluate_assessment({
+            'upright': 0, 'walk_10': 0, 'household': 0, 'mental': 0, 'stability': 0,
+        })
+        self.assertEqual(severe['recommended_level'], 1)
+        self.assertEqual(severe['phase'], 1)
+
+        walk_crash = evaluate_assessment({
+            'upright': 2, 'walk_10': 1, 'household': 2, 'mental': 2, 'stability': 1,
+        })
+        self.assertLessEqual(walk_crash['recommended_level'], 3)
+        self.assertEqual(walk_crash['phase'], 1)
+
+    def test_steady_ten_minute_walker_starts_in_phase_two(self):
+        moderate = evaluate_assessment({
+            'upright': 3, 'walk_10': 3, 'household': 2, 'mental': 3, 'stability': 2,
+        })
+        self.assertGreaterEqual(moderate['recommended_level'], 5)
+        self.assertLessEqual(moderate['recommended_level'], 7)
+        self.assertEqual(moderate['phase'], 2)
+
+    def test_invalid_answers_are_rejected(self):
+        with self.assertRaises(ValueError):
+            evaluate_assessment({'upright': 1})
+        with self.assertRaises(ValueError):
+            evaluate_assessment({
+                'upright': 5, 'walk_10': 1, 'household': 1, 'mental': 1, 'stability': 1,
+            })
+
+
+class ProgramGuidanceTests(unittest.TestCase):
     def setUp(self):
-        self.today = date(2026, 1, 19)
-        self.plan = {'activity': 'Reading', 'limit': 10, 'step_back': 4, 'stepped_back': False}
-        self.entries = {
-            self.day(offset): {'minutes': value, 'feeling': 'usual', 'planned': 10, 'context': ''}
-            for offset, value in enumerate([10, 10, 9, 12, 8, 45, 9, 8, 8], start=-8)
-        }
-
-    def day(self, offset):
-        return (self.today + timedelta(days=offset)).isoformat()
-
-    def view(self):
-        return activity_view(self.plan, self.entries, self.today)
-
-    def test_typical_recent_minutes_recalculate_without_changing_limit(self):
-        self.assertEqual(self.view()['projection'], 10)
-        self.entries[self.day(-3)]['minutes'] = 7
-        self.entries[self.day(0)]['feeling'] = 'better'
-        self.assertEqual(self.view()['projection'], 9.5)
-        self.assertEqual(self.view()['plan']['limit'], 10)
-
-    def test_low_invalidates_previous_three_days_and_shows_lookback(self):
-        self.entries[self.day(-3)]['feeling'] = 'worse'
-        result = self.view()
-        self.assertEqual(result['sample_size'], 2)
-        self.assertIsNone(result['projection'])
-        self.assertEqual([item['date'] for item in result['lows'][0]['prior']],
-                         [self.day(-4), self.day(-5), self.day(-6)])
-        self.assertEqual(result['lows'][0]['prior'][1]['minutes'], 12)
-
-    def test_recent_crash_pauses_projection_and_keeps_missing_days_visible(self):
-        self.entries.pop(self.day(-1))
-        self.entries[self.day(0)]['feeling'] = 'crash'
-        result = self.view()
-        self.assertTrue(result['paused'])
-        self.assertTrue(result['above_before_low'])
-        self.assertIsNone(result['projection'])
-        self.assertEqual(result['lows'][0]['prior'][0], {'date': self.day(-1)})
-        self.assertEqual(result['lows'][0]['prior'][2]['minutes'], 45)
-
-    def test_missing_followup_is_not_counted_as_usual(self):
-        self.entries.pop(self.day(-4))
-        self.assertEqual(self.view()['sample_size'], 2)
-        self.assertIsNone(self.view()['projection'])
-
-    def test_active_step_back_holds_even_after_better_days(self):
-        self.plan['stepped_back'] = True
-        self.entries[self.day(0)]['feeling'] = 'better'
-        self.assertTrue(self.view()['paused'])
-        self.assertIsNone(self.view()['projection'])
-
-
-class GuidanceTests(unittest.TestCase):
-    def setUp(self):
-        self.today = date(2026, 1, 19)
+        self.day0 = date(2026, 1, 1)
         self.store = PlannerStore()
-        self.state = {'plan': None, 'activities': {}}
+        self.state = blank_state()
+        self.store.apply(
+            self.state,
+            'assessment',
+            {
+                'answers': {
+                    'upright': 2, 'walk_10': 2, 'household': 2, 'mental': 2, 'stability': 2,
+                },
+                'starting_level': 4,
+            },
+            self.day0,
+        )
 
-    def log(self, offset, feeling='usual', **fields):
-        day = self.today + timedelta(days=offset)
-        activity = self.state['plan']['activity'] if self.state['plan'] else None
-        self.store.apply(self.state, 'entry',
-                         {'date': day.isoformat(), 'activity': activity, 'feeling': feeling, **fields}, day)
+    def log(self, offset, feeling='steady', **fields):
+        day = self.day0 + timedelta(days=offset)
+        self.store.apply(
+            self.state,
+            'checkin',
+            {'date': day.isoformat(), 'feeling': feeling, **fields},
+            day,
+        )
 
-    def guide(self, offset=0):
-        return self.store.view(self.state, self.today + timedelta(days=offset))['roadmap']
+    def view(self, offset=0):
+        return self.store.view(self.state, self.day0 + timedelta(days=offset))
 
-    def test_starting_roadmap_is_available_without_an_exercise_plan(self):
-        result = self.guide()
-        self.assertEqual(result['stage'], 0)
-        self.assertEqual(result['stages'][1]['review_date'], '2026-01-25')
-        self.assertEqual(result['stages'][2]['review_date'], '2026-02-01')
-        self.assertEqual(result['suggestions'][0]['name'], 'Quiet rest')
-        self.assertFalse(result['ready'])
+    def test_prepopulated_activities_and_optional_category_toggles(self):
+        v = self.view()
+        ids = {item['id'] for item in v['program']['activities']}
+        self.assertEqual(ids, {'rest', 'household', 'walking', 'stretching', 'mental', 'social'})
 
-    def test_above_plan_waits_for_follow_up_even_on_a_better_day(self):
-        self.store.apply(self.state, 'plan', {'activity': 'Reading', 'limit': 10}, self.today)
-        for offset in range(-7, 0):
-            self.log(offset, minutes=10)
-        self.assertTrue(self.guide()['ready'])
-        self.log(0, 'better', minutes=14)
-        result = self.guide()
-        self.assertFalse(result['ready'])
-        self.assertEqual(result['stages'][1]['review_date'], '2026-01-22')
-        self.log(1, minutes=10)
-        self.log(2, minutes=10)
-        self.assertFalse(self.guide(2)['ready'])
-        self.log(3, minutes=10)
-        result = self.guide(3)
-        self.assertTrue(result['ready'])
-        self.assertEqual(result['stage'], 0)
-        self.assertEqual(result['findings']['2026-01-19']['status'], 'observed')
-        self.store.apply(self.state, 'roadmap', {'direction': 'next'}, self.today + timedelta(days=3))
-        result = self.guide(3)
-        self.assertEqual(result['stage'], 1)
-        self.assertEqual(result['logged_days'], 0)
-        self.assertEqual(self.state['plan']['limit'], 10)
+        self.store.apply(
+            self.state,
+            'preferences',
+            {'disabled_categories': ['Social']},
+            self.day0,
+        )
+        v2 = self.view()
+        ids2 = {item['id'] for item in v2['program']['activities']}
+        self.assertNotIn('social', ids2)
+        self.assertIn('walking', ids2)
+        self.assertIn('mental', ids2)
 
-    def test_crash_two_days_later_resets_review_and_switches_suggestions(self):
-        self.store.apply(self.state, 'plan', {'activity': 'Reading', 'limit': 10}, self.today)
-        for offset in range(-7, 0):
-            self.log(offset, minutes=10)
-        self.log(0, 'better', minutes=16)
-        original_review = self.guide()['stages'][1]['review_date']
-        self.log(2, 'crash', minutes=0)
-        result = self.guide(2)
-        self.assertGreater(result['stages'][1]['review_date'], original_review)
-        self.assertEqual(result['logged_days'], 0)
-        self.assertEqual(result['findings']['2026-01-19']['days_until_low'], 2)
-        self.assertIn('help', [item['key'] for item in result['suggestions']])
-        self.log(3, 'better')
-        self.assertTrue(self.guide(3)['setback'])
-        self.log(4)
-        self.assertFalse(self.guide(4)['setback'])
-        self.assertFalse(self.guide(4)['ready'])
+        # Cushioned scaling reduces activity minutes proportionally.
+        cushioned = level_activities(4, cushion_pct=15)
+        walk = next(item for item in cushioned if item['id'] == 'walking')
+        self.assertEqual(walk['minutes'], 7)
 
-    def test_routine_amounts_are_available_in_lookback_and_keep_old_plan(self):
-        action = {'operation': 'add', 'suggestion': 'quiet-rest', 'planned': 15}
-        self.store.apply(self.state, 'routine', action, self.today)
-        rest = next(iter(self.state['routine']))
-        self.store.apply(self.state, 'routine',
-                         {'operation': 'add', 'name': 'Reading', 'kind': 'Thinking', 'planned': 6}, self.today)
-        reading = next(key for key in self.state['routine'] if key != rest)
-        self.log(-2, routine={rest: 24, reading: 9})
-        self.store.apply(self.state, 'routine', {'operation': 'remove', 'id': reading}, self.today)
-        self.log(-2, routine={rest: 24})
-        self.log(0, 'crash')
-        view = self.store.view(self.state, self.today)
-        entry = view['lows'][0]['prior'][1]
-        self.assertEqual(entry['routine'][reading]['planned'], 6)
-        self.assertEqual(entry['routine'][reading]['minutes'], 9)
-        self.assertTrue(view['above_before_low'])
-        self.assertTrue(view['roadmap']['findings']['2026-01-17']['above_plan'])
+    def test_hold_window_step_up_and_reassess_five_days_shift_projection(self):
+        # Level 4 default hold_days is 24.
+        for offset in range(23):
+            self.log(offset, 'steady', activities={'walking': 'just_right', 'mental': 'just_right'})
+        v = self.view(22)
+        self.assertFalse(v['program']['step_up_ready'])
+        self.assertEqual(v['program']['steady_days'], 23)
 
-    def test_missing_follow_ups_are_not_reported_as_observed(self):
-        self.store.apply(self.state, 'plan', {'activity': 'Reading', 'limit': 10}, self.today)
-        for offset in range(-12, -4):
-            self.log(offset, minutes=10)
-        self.log(-4, minutes=15)
-        self.log(-2)
-        self.log(0)
-        result = self.guide()
-        self.assertEqual(result['findings']['2026-01-15']['status'], 'incomplete')
-        self.assertEqual(result['review_items'], ['Reading'])
-        self.assertEqual(result['missing_follow_ups'], 1)
-        self.assertFalse(result['ready'])
+        self.log(23, 'steady', activities={'walking': 'could_do_more'})
+        v = self.view(23)
+        self.assertTrue(v['program']['step_up_ready'])
+        base_eta = date.fromisoformat(v['trajectory']['estimated_full_recovery_date'])
+
+        # Choosing "Reassess in 5 days" extends hold by 5 and shifts Level 12 projection by 5 days.
+        self.store.apply(self.state, 'decision', {'choice': 'hold_five'}, self.day0 + timedelta(days=23))
+        v_held = self.view(23)
+        self.assertFalse(v_held['program']['step_up_ready'])
+        self.assertEqual(v_held['program']['hold_days'], 29)
+        shifted_eta = date.fromisoformat(v_held['trajectory']['estimated_full_recovery_date'])
+        self.assertEqual((shifted_eta - base_eta).days, 5)
+
+        # Complete 5 more steady days then advance to Level 5.
+        for offset in range(24, 29):
+            self.log(offset, 'steady')
+        v_ready = self.view(28)
+        self.assertTrue(v_ready['program']['step_up_ready'])
+        self.store.apply(self.state, 'decision', {'choice': 'advance'}, self.day0 + timedelta(days=28))
+        v_next = self.view(28)
+        self.assertEqual(v_next['program']['level'], 5)
+        self.assertEqual(v_next['program']['steady_days'], 0)
+
+    def test_beyond_plan_benchmark_delayed_crash_and_tolerated(self):
+        # Tolerated unplanned event after 3 steady follow-ups
+        self.log(0, 'steady', beyond_plan=[{'label': 'Short coffee', 'effort': 'light', 'minutes': 20}])
+        self.log(1, 'steady')
+        self.log(2, 'steady')
+        # Still watching inside 3-day window — blocks step-up even if hold_days were shorter
+        self.assertIsNotNone(self.view(2)['program']['pending_watch'])
+        self.log(3, 'steady')
+        v = self.view(3)
+        self.assertIsNone(v['program']['pending_watch'])
+        self.assertEqual(v['benchmarks'][0]['outcome'], 'tolerated')
+
+        # Unplanned drive followed by crash 2 days later -> not_ready + enters stabilization
+        self.log(10, 'steady', beyond_plan=[{'label': 'Long drive', 'effort': 'heavy', 'minutes': 60}])
+        self.log(11, 'worn')
+        self.log(12, 'crash')
+        v_crash = self.view(12)
+        self.assertEqual(v_crash['program']['mode'], 'stabilizing')
+        self.assertEqual(v_crash['benchmarks'][0]['label'], 'Long drive')
+        self.assertEqual(v_crash['benchmarks'][0]['outcome'], 'not_ready')
+        self.assertIn('2 days later', v_crash['benchmarks'][0]['outcome_text'])
+
+    def test_two_worse_days_and_adaptive_step_back_learning(self):
+        # First setback: 2 consecutive worse days early at Level 4 with no external trigger -> step back to 3.
+        self.log(0, 'steady')
+        self.log(1, 'worse')
+        self.log(2, 'worse')
+        v_stab = self.view(2)
+        self.assertEqual(v_stab['program']['mode'], 'stabilizing')
+        self.assertFalse(v_stab['program']['ready_to_resume'])
+
+        # 2 steady days unlock resume recommendation to Level 3.
+        self.log(3, 'steady')
+        self.log(4, 'steady')
+        v_ready = self.view(4)
+        self.assertTrue(v_ready['program']['ready_to_resume'])
+        self.assertEqual(v_ready['program']['resume_recommendation']['recommended_level'], 3)
+        self.assertEqual(v_ready['program']['resume_recommendation']['cushion_pct'], 0)
+
+        self.store.apply(self.state, 'decision', {'choice': 'resume'}, self.day0 + timedelta(days=4))
+        v_resumed = self.view(4)
+        self.assertEqual(v_resumed['program']['mode'], 'active')
+        self.assertEqual(v_resumed['program']['level'], 3)
+
+        # Second crash within 21 days -> adaptive engine steps back further + applies 15% cushion & +7 hold days.
+        self.log(7, 'crash')
+        self.log(8, 'steady')
+        self.log(9, 'steady')
+        v_repeat = self.view(9)
+        rec = v_repeat['program']['resume_recommendation']
+        self.assertEqual(rec['recommended_level'], 1)
+        self.assertEqual(rec['cushion_pct'], 15)
+        self.assertEqual(rec['extra_hold_days'], 7)
+
+        self.store.apply(self.state, 'decision', {'choice': 'resume'}, self.day0 + timedelta(days=9))
+        v_soft = self.view(9)
+        self.assertEqual(v_soft['program']['level'], 1)
+        self.assertEqual(v_soft['program']['cushion_pct'], 15)
+        self.assertEqual(v_soft['program']['hold_days'], 28)
+
+    def test_external_trigger_after_seven_steady_days_offers_same_level_resume(self):
+        for offset in range(8):
+            self.log(offset, 'steady')
+        self.log(8, 'steady', beyond_plan=[{'label': 'Medical appointment', 'effort': 'medium'}])
+        self.log(10, 'crash')
+        self.log(11, 'steady')
+        self.log(12, 'steady')
+        v = self.view(12)
+        rec = v['program']['resume_recommendation']
+        self.assertEqual(rec['recommended_level'], 4)
+        self.assertTrue(rec['external_trigger'])
 
 
 class PlannerTests(unittest.TestCase):
@@ -283,13 +321,19 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.write_token = json.loads(body)['write_token']
 
+    def write(self, action, payload, origin=None):
+        return self.request('POST', f'/api/planner/{action}', json.dumps(payload),
+                            {'Content-Type': 'application/json', 'Origin': origin or self.origin,
+                             'Cookie': self.cookie, 'X-Planner-Session': self.write_token})
+
     def test_home_page(self):
         self.authenticate()
         status, headers, body = self.request('GET', '/?test=1', headers={'Cookie': self.cookie})
         self.assertEqual(status, 200)
         self.assertEqual(headers['Content-Type'], 'text/html; charset=utf-8')
         self.assertIn(b'ME/CFS Recovery Planner', body)
-        self.assertIn(b'Activity over time', body)
+        self.assertIn(b'id="trajectory-chart"', body)
+        self.assertIn(b'id="onboarding" class="onboarding" hidden', body)
         self.assertIn(b'src="planner.js"', body)
         self.assertIn(b'id="account-bar" class="account-bar" hidden', body)
         self.assertIn(b'id="dashboard" hidden', body)
@@ -317,52 +361,54 @@ class PlannerTests(unittest.TestCase):
                 self.assertEqual(headers['Content-Type'], f'{content_type}; charset=utf-8')
                 self.assertTrue(body)
 
-    def write(self, action, payload, origin=None):
-        return self.request('POST', f'/api/planner/{action}', json.dumps(payload),
-                            {'Content-Type': 'application/json', 'Origin': origin or self.origin,
-                             'Cookie': self.cookie, 'X-Planner-Session': self.write_token})
-
-    def test_local_plan_check_in_and_step_back(self):
+    def test_end_to_end_assessment_checkin_preferences_and_crash_flow(self):
         self.authenticate()
-        plan = {'activity': 'Puzzles', 'limit': 10, 'step_back': 0}
-        status, _, body = self.write('plan', plan)
+        status, _, body = self.write('assessment', {
+            'answers': {'upright': 2, 'walk_10': 2, 'household': 2, 'mental': 2, 'stability': 2},
+            'starting_level': 4,
+        })
         self.assertEqual(status, 200)
-        today = json.loads(body)['today']
-        entry = {'date': today, 'activity': 'Puzzles', 'minutes': 15, 'feeling': 'better'}
-        status, _, body = self.write('entry', entry)
-        self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body)['plan']['limit'], 10)
-        self.assertEqual(json.loads(body)['history'][0]['planned'], 10)
+        data = json.loads(body)
+        self.assertTrue(data['onboarded'])
+        self.assertEqual(data['program']['level'], 4)
+        today = data['today']
 
-        status, _, body = self.write('mode', {'activity': 'Puzzles', 'stepped_back': True})
+        status, _, body = self.write('checkin', {
+            'date': today,
+            'feeling': 'crash',
+            'activities': {'walking': 'too_much', 'rest': 'just_right'},
+            'factors': ['sleep'],
+            'beyond_plan': [{'label': 'Family drive', 'effort': 'heavy', 'minutes': 45}],
+            'note': 'Overdid the afternoon',
+        })
         self.assertEqual(status, 200)
-        self.assertTrue(json.loads(body)['plan']['stepped_back'])
-        status, _, body = self.write('entry', {**entry, 'feeling': 'crash'})
-        self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body)['history'][0]['planned'], 10)
-        self.assertTrue(json.loads(body)['review'])
+        data = json.loads(body)
+        self.assertEqual(data['program']['mode'], 'stabilizing')
+        self.assertEqual(data['benchmarks'][0]['outcome'], 'not_ready')
 
-        status, headers, body = self.request('GET', '/api/planner', headers={'Cookie': self.cookie})
+        status, _, body = self.write('preferences', {'disabled_categories': ['Social'], 'hold_scale': 1.25})
         self.assertEqual(status, 200)
-        self.assertEqual(headers['Cache-Control'], 'no-store')
-        self.assertTrue(json.loads(body)['plan']['stepped_back'])
-        status, _, body = self.write('mode', {'activity': 'Puzzles', 'stepped_back': False})
-        self.assertEqual(status, 200)
-        self.assertFalse(json.loads(body)['plan']['stepped_back'])
+        self.assertEqual(json.loads(body)['profile']['disabled_categories'], ['Social'])
 
-    def test_cross_origin_write_and_invalid_plan_are_rejected(self):
+        status, _, body = self.write('decision', {'choice': 'resume', 'level': 3})
+        self.assertEqual(status, 200)
+        resumed = json.loads(body)
+        self.assertEqual(resumed['program']['mode'], 'active')
+        self.assertEqual(resumed['program']['level'], 3)
+
+    def test_cross_origin_write_and_invalid_payloads_are_rejected(self):
         self.authenticate()
-        plan = {'activity': 'Puzzles', 'limit': 10, 'step_back': 12}
-        status, _, _ = self.write('plan', plan, 'http://another.test')
+        bad_assessment = {'answers': {'upright': 99}}
+        status, _, _ = self.write('assessment', bad_assessment, 'http://another.test')
         self.assertEqual(status, 403)
-        status, _, _ = self.write('plan', plan)
+        status, _, _ = self.write('assessment', bad_assessment)
         self.assertEqual(status, 400)
 
     def test_anonymous_visitors_cannot_read_write_or_register(self):
         status, headers, _ = self.request('GET', '/')
         self.assertEqual((status, headers['Location']), (303, '/login'))
         self.assertEqual(self.request('GET', '/api/planner')[0], 401)
-        for path, expected in (('/api/planner/plan', 401), ('/register', 404)):
+        for path, expected in (('/api/planner/assessment', 401), ('/register', 404)):
             result = self.request('POST', path, '{}',
                                   {'Origin': self.origin, 'Content-Type': 'application/json'})
             self.assertEqual(result[0], expected)
@@ -384,18 +430,24 @@ class PlannerTests(unittest.TestCase):
 
     def test_two_accounts_are_isolated_and_old_tabs_cannot_write(self):
         self.authenticate()
-        self.assertEqual(self.write('plan', {'activity': 'Reading', 'limit': 7})[0], 200)
+        self.assertEqual(self.write('assessment', {
+            'answers': {'upright': 1, 'walk_10': 1, 'household': 1, 'mental': 1, 'stability': 1},
+            'starting_level': 2,
+        })[0], 200)
         first_cookie, first_token = self.cookie, self.write_token
         self.authenticate('Second')
         status, _, body = self.request('GET', '/api/planner', headers={'Cookie': self.cookie})
         self.assertEqual(status, 200)
-        self.assertIsNone(json.loads(body)['plan'])
-        self.assertEqual(self.write('plan', {'activity': 'Walking', 'limit': 12})[0], 200)
+        self.assertFalse(json.loads(body)['onboarded'])
+        self.assertEqual(self.write('assessment', {
+            'answers': {'upright': 3, 'walk_10': 3, 'household': 3, 'mental': 3, 'stability': 3},
+            'starting_level': 6,
+        })[0], 200)
         self.write_token = first_token
-        self.assertEqual(self.write('plan', {'activity': 'Reading', 'limit': 8})[0], 409)
+        self.assertEqual(self.write('decision', {'choice': 'set_level', 'level': 3})[0], 409)
         status, _, body = self.request('GET', '/api/planner', headers={'Cookie': first_cookie})
         self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body)['plan']['activity'], 'Reading')
+        self.assertEqual(json.loads(body)['program']['level'], 2)
 
     def test_configured_https_proxy_requires_correct_host_and_sets_secure_cookie(self):
         origin = 'https://planner.example.net'
